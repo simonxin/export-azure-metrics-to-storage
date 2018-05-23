@@ -5,11 +5,11 @@
 # Usage sample: get performance metricx from a specific resource
 # give a valid resource group name, resource type name and resource name
 
-# parameters: 
+# parameters:
 # -ResourceGroupName: resource group name
 # -ResourceType: Resource Type Name
 # -ResourceName: Resource Name
-# -storageaccountresourcegroup: storage account resource group 
+# -storageaccountresourcegroup: storage account resource group
 # -storageaccount: storage account name
 # -tablename: table name in the target storage account
 
@@ -20,7 +20,7 @@
 # time: 2018-5-23
 
 Param
-    (   
+    (
         [Parameter(Mandatory = $true)]
         [String]$ResourceGroupName,
 
@@ -50,14 +50,14 @@ function ConvertTo-Hashtable {
         [Parameter(ValueFromPipeline)]
         $InputObject
     )
- 
+
     process {
         ## Return null if the input is null. This can happen when calling the function
         ## recursively and a property is null
         if ($null -eq $InputObject) {
             return $null
         }
- 
+
         ## Check if the input is an array or collection. If so, we also need to convert
         ## those types into hash tables as well. This function will convert all child
         ## objects into hash tables (if applicable)
@@ -67,7 +67,7 @@ function ConvertTo-Hashtable {
                     ConvertTo-Hashtable -InputObject $object
                 }
             )
- 
+
             ## Return the array but don't enumerate it because the object may be pretty complex
             Write-Output -NoEnumerate $collection
         } elseif ($InputObject -is [psobject]) { ## If the object has properties that need enumeration
@@ -85,24 +85,24 @@ function ConvertTo-Hashtable {
     }
 }
 
-   
+
 
     $automationConnectionName = "AzureRunAsConnection"
-    
+
     $StartTime = [dateTime]::Now.Subtract([TimeSpan]::FromMinutes(60))
-    
+
     # Get the connection by name (i.e. AzureRunAsConnection)
-    $servicePrincipalConnection = Get-AutomationConnection -Name $automationConnectionName         
+    $servicePrincipalConnection = Get-AutomationConnection -Name $automationConnectionName
 
     Write-Output "Logging in to Azure..."
-    
+
     Add-AzureRmAccount `
         -ServicePrincipal `
         -TenantId $servicePrincipalConnection.TenantId `
         -ApplicationId $servicePrincipalConnection.ApplicationId `
         -CertificateThumbprint $servicePrincipalConnection.CertificateThumbprint `
         -EnvironmentName AzureChinaCloud
-     
+
     # if no resouce name defined, check all resource types
 
     If (($ResourceGroupname -eq "") -and ($ResourceType -eq "") -and ($Resourcename -eq "")) {
@@ -131,26 +131,29 @@ $storageTable = Get-AzureStorageTable –Name $tableName –Context $ctx
    foreach ($MyResource in $MyResources ) {
         $MetricsNames = Get-AzureRmMetricDefinition -ResourceId $MyResource.ResourceId -WarningAction silentlyContinue -ErrorAction silentlyContinue
         $table = @()
-       
+
         foreach($MetricsName in $MetricsNames) {
-            
+
             $CounterName = $MetricsName.Name.Value
             $CounterNameLocalized = $MetricsName.Name.LocalizedValue
             $CounterUnit = $MetricsName.Unit
-            
+
+            # set the performance metrics into a 5 minutes bin
             $Metric = Get-AzureRmMetric -ResourceId $MyResource.ResourceId -TimeGrain ([TimeSpan]::FromMinutes(5)) -StartTime $StartTime -MetricName $CounterName -WarningAction silentlyContinue
             # Format metrics into a table, we will always choice 1 line
-           
-            $MetricObjects = $Metric.Data 
-          
+
+            $MetricObjects = $Metric.Data
+
             foreach ($MetricObject in $MetricObjects)  {
-                $countertimestamp = $MetricObject.Timestamp.ToUniversalTime().ToString("yyyyMMddHHmmss")   
-         
+                $countertimestamp = $MetricObject.Timestamp.ToUniversalTime().ToString("yyyyMMddHHmmss")
+
+           # set the table partition as resourcegroupname plus resourcename plus counter name
+           # set the table rowkey as formated time string
                 $partitionKey =  $MyResource.ResourceGroupName+$MyResource.Name+"$CounterName"
                 $rowKey = $countertimestamp.tostring()
-               
+
                 $sx = @{
-                    "MetricName" = $CounterName; 
+                    "MetricName" = $CounterName;
                     "MetricDisplayName" = $CounterNameLocalized;
                     "MetricUnit" = $CounterUnit.tostring();
                     "Total" = $MetricObject.Total;
@@ -169,12 +172,11 @@ $storageTable = Get-AzureStorageTable –Name $tableName –Context $ctx
                 $jsonTable  = $jsonTable.Replace("null", 0)
                 $perfobj = $jsontable | ConvertFrom-Json | ConvertTo-HashTable
 
-               #SubscriptionID = $servicePrincipalConnection.SubscriptionID;             
+               #SubscriptionID = $servicePrincipalConnection.SubscriptionID;
                Add-StorageTableRow -table $storageTable -partitionKey $partitionKey -rowKey $rowKey -property $perfobj  -UpdateExisting
-                                 
+
             }
-            
+
         }
 
     }
-
